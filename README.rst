@@ -36,6 +36,9 @@ Then run the tests like this::
 
     mpiexec -np 10 python runtests.py [args-to-nose]
 
+The number of ranks should be the **maximum** of the ranks needed
+in individual tests.
+
 Using ``runtests.py`` rather than ``nosetests`` will silence nose
 printing from every rank but the 0-rank. After each
 ``@mpitest``-decorated test has run, the results are gathered
