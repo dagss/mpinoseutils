@@ -6,6 +6,11 @@ mpinoseutils -- Utilities for using nose and mpi4py together
 
 What you need is included in the module ``mpinoseutils.py``.
 
+An ``__init__.py`` is provided in case you want to use ``git subtree``
+to make this a sub-package of your own projects. Distribution with
+your own projects is encouraged at this time, perhaps once the project
+is mature it can become a dependency instead.
+
 Usage
 -----
 
