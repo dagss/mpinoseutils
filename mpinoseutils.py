@@ -97,7 +97,7 @@ def _spawn_mpi_test(nprocs, func):
     zctx = zmq.Context()
     socket = zctx.socket(zmq.REQ)
     port = socket.bind_to_random_port("tcp://*")
-    cmd = 'import mpinoseutils; mpinoseutils._mpi_worker("tcp://*:%d")' % port
+    cmd = 'import %s as mod; mod._mpi_worker("tcp://*:%d")' % (__name__, port)
     env = dict(os.environ)
     env['PYTHONPATH'] = ':'.join(sys.path)
     child = subprocess.Popen(['mpiexec', '-np', str(nprocs), sys.executable,
