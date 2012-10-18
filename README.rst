@@ -33,15 +33,14 @@ Write tests like this::
 Running in non-collective mode
 ------------------------------
 
-Then run the tests like regular. When the test is run, the decorator
-will spawn MPI subprocesses using ``mpiexec`` and communicate with
-rank 0 using ZeroMQ in order to execute the function and
-report the results. For each ``@mpitest``, a new, isolated set of
-MPI processes are spawned.
+Run the test with ``nosetests`` as usual. When the test is run, the
+decorator will spawn MPI subprocesses using ``mpiexec`` and
+communicate with rank 0 using ZeroMQ in order to execute the function
+and report the results.
 
-Test fixtures (``setup()``, ``teardown()`` etc.) are not run; the
-function is simply executed as the only thing in the spawned Python
-process.
+For each module containing tests, a new, isolated set of
+MPI processes are spawned. The workers are reused for all tests
+in a test module.
 
 
 Running in collective mode
@@ -60,6 +59,13 @@ Using ``runtests.py`` rather than ``nosetests`` will silence nose
 printing from every rank but the 0-rank. After each
 ``@mpitest``-decorated test has run, the results are gathered
 to rank 0, which will raise errors on behalf of the other ranks.
+
+Bugs
+----
+
+Test fixtures (``setup()``, ``teardown()`` etc.) are not supported yet;
+they may work accidentally but it's not tested. Module initialization
+code should be run once per test module per process.
 
 License
 -------

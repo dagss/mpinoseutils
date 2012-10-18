@@ -2,6 +2,7 @@ from __future__ import print_function
 import sys
 import contextlib
 import functools
+import inspect
 
 from mpi4py import MPI
 import numpy as np
@@ -86,55 +87,69 @@ def first_nonzero(arr):
     else:
         return hits[0][0]
 
-def _spawn_mpi_test(nprocs, func):
-    import subprocess
-    import sys
-    import os
-    import zmq
+class MpiWorkers:
+    def __init__(self, max_nprocs):
+        import subprocess
+        import sys
+        import os
+        import zmq
 
-    # Since the output terminals are used for lots of debug output etc., we use
-    # ZeroMQ to communicate with the workers.
-    zctx = zmq.Context()
-    socket = zctx.socket(zmq.REQ)
-    port = socket.bind_to_random_port("tcp://*")
-    cmd = 'import %s as mod; mod._mpi_worker("tcp://*:%d")' % (__name__, port)
-    env = dict(os.environ)
-    env['PYTHONPATH'] = ':'.join(sys.path)
-    child = subprocess.Popen(['mpiexec', '-np', str(nprocs), sys.executable,
-                              '-c', cmd], env=env)
+        # Since the output terminals are used for lots of debug output etc., we use
+        # ZeroMQ to communicate with the workers.
+        zctx = zmq.Context()
+        socket = zctx.socket(zmq.REQ)
+        port = socket.bind_to_random_port("tcp://*")
+        cmd = 'import %s as mod; mod._mpi_worker("tcp://*:%d")' % (__name__, port)
+        env = dict(os.environ)
+        env['PYTHONPATH'] = ':'.join(sys.path)
+        self.child = subprocess.Popen(['mpiexec', '-np', str(max_nprocs), sys.executable,
+                                       '-c', cmd], env=env)
+        self.socket = socket
 
-    # Call on the root worker; it will use MPI to scatter func and gather result
-    socket.send_pyobj((func.__module__, func.__name__))
-    result = socket.recv_pyobj()
-    socket.send_pyobj('stop')
-    socket.recv_pyobj()
-    # TODO: If nose is capturing, gather output from child and forward to nose
-    child.wait()
-    _raise_condition(*result)
+    def stop(self):
+        if self.socket is None:
+            raise AssertionError('stopped multiple times')
+        self.socket.send_pyobj('stop')
+        self.socket.recv_pyobj()
+        # TODO: If nose is capturing, gather output from child and forward to nose
+        self.child.wait()
+        self.socket = self.child = None
+
+    def run_and_raise_result(self, func):
+        # Call on the root worker; it will use MPI to scatter func and gather result
+        self.socket.send_pyobj((func.__module__, func.__name__))
+        result = self.socket.recv_pyobj()
+        _raise_condition(*result)
 
 def _mpi_worker(addr):
     import importlib
     import zmq
-    from cPickle import loads
+    from cPickle import loads, dumps
 
     rank = MPI.COMM_WORLD.Get_rank()
     if rank == 0:
         zctx = zmq.Context()
         socket = zctx.socket(zmq.REP)
         socket.connect(addr)
-        pickled_func_info = socket.recv()
-    else:
-        pickled_func_info = None
-    pickled_func_info = MPI.COMM_WORLD.bcast(pickled_func_info, root=0)
-    module_name, func_name = loads(pickled_func_info)
-    mod = importlib.import_module(module_name)
-    func = getattr(mod, func_name)    
-    status = func(_return_status=True)
-    if rank == 0:
-        socket.send_pyobj(status)
-        # Wait for termination message
-        assert socket.recv_pyobj() == 'stop'
-        socket.send_pyobj('')
+        
+    while True:
+        if rank == 0:
+            pickled_msg = socket.recv()
+        else:
+            pickled_msg = None
+        pickled_msg = MPI.COMM_WORLD.bcast(pickled_msg, root=0)
+        msg = loads(pickled_msg)
+        if msg == 'stop':
+            if rank == 0:
+                socket.send_pyobj('')
+            break
+        else:
+            module_name, func_name = msg
+            mod = importlib.import_module(module_name)
+            func = getattr(mod, func_name)    
+            status = func(_return_status=True)
+            if rank == 0:
+                socket.send_pyobj(status)
     # All processes wait until they can terminate
     MPI.COMM_WORLD.barrier()
         
@@ -166,6 +181,12 @@ def mpitest(nprocs):
        with failures. Finally, the process succeeds.
     """
     def dec(func):
+        mod = inspect.getmodule(func)
+        max_mpi_comm_size = max(nprocs, getattr(mod, 'max_mpi_comm_size', 0))
+        mod.max_mpi_comm_size = max_mpi_comm_size
+
+        mod.mpi_test_count = getattr(mod, 'mpi_test_count', 0) + 1
+
         @functools.wraps(func)
         def replacement_func(_return_status=False):
             from cPickle import dumps
@@ -174,8 +195,18 @@ def mpitest(nprocs):
             rank = MPI.COMM_WORLD.Get_rank()
             import os
             if n == 1:
-                # Not in collective mode; spawn a sub-process to run this test
-                return _spawn_mpi_test(nprocs, func)
+                # spawn workers for module if not done already
+                mpi_workers = getattr(mod, 'mpi_workers', None)
+                if mpi_workers is None:
+                    mod.mpi_workers = mpi_workers = MpiWorkers(mod.max_mpi_comm_size)
+                try:
+                    mpi_workers.run_and_raise_result(func)
+                finally:
+                    mod.mpi_test_count -= 1
+                    if mod.mpi_test_count == 0:
+                        del mod.mpi_workers
+                        mpi_workers.stop()
+                return
             
             if n < nprocs:
                 raise RuntimeError('Number of available MPI processes (%d) '
