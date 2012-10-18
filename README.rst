@@ -4,14 +4,7 @@ mpinoseutils -- Utilities for using nose and mpi4py together
 "Installation"
 --------------
 
-Copy the files ``mpinoseutils.py`` (a Python module) and
-``runtests.py`` (a test-runner script) to appropriate places in your
-project. Also, add this to your ``setup.cfg``::
-
-    [nosetests]
-    
-    with-mpi=1
-
+What you need is included in the module ``mpinoseutils.py``.
 
 Usage
 -----
@@ -32,18 +25,36 @@ Write tests like this::
         mprint(comm, 'allranks == ', allranks)
         assert_eq_across_ranks(comm, allranks)
 
-Then run the tests like this::
+Running in non-collective mode
+------------------------------
+
+Then run the tests like regular. When the test is run, the decorator
+will spawn MPI subprocesses using ``mpiexec`` and communicate with
+rank 0 using ZeroMQ in order to execute the function and
+report the results. For each ``@mpitest``, a new, isolated set of
+MPI processes are spawned.
+
+Test fixtures (``setup()``, ``teardown()`` etc.) are not run; the
+function is simply executed as the only thing in the spawned Python
+process.
+
+
+Running in collective mode
+--------------------------
+
+Alternatively, by using ``setup.cfg`` and ``runtests.py``,
+you can run all the MPI processes through all the tests::
 
     mpiexec -np 10 python runtests.py [args-to-nose]
 
-The number of ranks should be the **maximum** of the ranks needed
-in individual tests.
+The number of ranks should be the **maximum** of the ranks needed in
+individual tests (i.e., the ``@mpitest`` decorator creates a
+sub-communicator with the right number of ranks).
 
 Using ``runtests.py`` rather than ``nosetests`` will silence nose
 printing from every rank but the 0-rank. After each
 ``@mpitest``-decorated test has run, the results are gathered
 to rank 0, which will raise errors on behalf of the other ranks.
-    
 
 License
 -------
